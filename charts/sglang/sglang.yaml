@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sglang
+  labels:
+    app: sglang
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sglang
+  template:
+    metadata:
+      labels:
+        app: sglang
+      annotations:
+        hami.io/node-scheduler-policy: binpack
+        hami.io/gpu-scheduler-policy: binpack
+    spec:
+      schedulerName: hami-scheduler
+      containers:
+        - name: sglang-qwen
+          image: lmsysorg/sglang:latest
+          command:
+            - python3
+            - -m
+            - sglang.launch_server
+            - --model-path=Qwen/Qwen3-1.7B
+            - --host=0.0.0.0
+            - --port=30000
+            - --mem-fraction-static=0.7
+            - --context-length=8192
+            - --attention-backend=triton
+          ports:
+            - containerPort: 30000
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+              nvidia.com/gpucores: "30"
+              nvidia.com/gpumem: "25000"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 30000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60
+          volumeMounts:
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 4Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sglang
+spec:
+  selector:
+    app: sglang
+  ports:
+    - protocol: TCP
+      port: 8001
+      targetPort: 30000
+      name: sglang-svc
+  type: ClusterIP

@@ -1,0 +1,21 @@
+releases:
+  - name: longrunning
+    namespace: default
+    chart: ../charts/qwen_longrunning/
+    labels:
+      component: deployment
+      tag: longrunning
+
+  # - name: spread
+  #   namespace: default
+  #   chart: ../charts/spread
+  #   labels:
+  #     component: deployment
+  #     tag: spread
+  #
+  # - name: mig
+  #   namespace: default
+  #   chart: ../charts/mig
+  #   labels:
+  #     component: pod
+  #     tag: mig

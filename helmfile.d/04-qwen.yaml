@@ -1,0 +1,7 @@
+releases:
+  - name: qwen
+    namespace: default
+    chart: ../charts/qwen
+    labels:
+      component: llm-workload
+      tag: qwen

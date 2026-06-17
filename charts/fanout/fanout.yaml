@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-fanout
+  labels:
+    app: gpu-fanout
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: gpu-fanout
+  template:
+    metadata:
+      labels:
+        app: gpu-fanout
+      annotations:
+        hami.io/gpu-scheduler-policy: binpack
+    spec:
+      schedulerName: hami-scheduler
+      containers:
+        - name: gpu-holder
+          # Reuses the already-pulled SGLang image (has torch + CUDA), so no extra pull.
+          image: lmsysorg/sglang:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: ALLOC_MB
+              value: "1024"
+          command:
+            - python3
+            - -c
+            - |
+              import os, time, torch
+              mb = int(os.environ.get("ALLOC_MB", "1024"))
+              n = mb * 1024 * 1024 // 4  # float32 elements
+              x = torch.zeros(n, dtype=torch.float32, device="cuda")
+              torch.cuda.synchronize()
+              print(f"[gpu-fanout] allocated {mb} MB on {torch.cuda.get_device_name(0)}", flush=True)
+              while True:
+                  time.sleep(3600)
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+              nvidia.com/gpucores: "4"
+              nvidia.com/gpumem: "3000"

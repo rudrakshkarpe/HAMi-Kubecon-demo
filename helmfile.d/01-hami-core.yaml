@@ -1,0 +1,66 @@
+repositories:
+  - name: hami-charts
+    url: https://project-hami.github.io/HAMi
+
+releases:
+  # kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container-engine-accelerators/master/nvidia-driver-installer/ubuntu/daemonset-preloaded.yaml
+  - name: nvidia-operator-quota
+    namespace: gpu-operator
+    chart: ../charts/nvidia-operator
+    wait: true
+    labels:
+      component: operator
+      tag: nvidia
+
+  - name: nvidia-operator
+    namespace: gpu-operator
+    chart: nvidia/gpu-operator
+    disableValidation: true
+    version: v26.3.1
+    # version: v25.3.0
+    needs:
+      - nvidia-operator-quota
+    wait: true
+    labels:
+      component: operator
+      tag: nvidia
+    values:
+      - hostPaths:
+          driverInstallDir: /home/kubernetes/bin/nvidia
+      - toolkit:
+          installDir: /home/kubernetes/bin/nvidia
+      - cdi:
+          enabled: true
+          default: true
+      - dcgmExporter:
+          serviceMonitor:
+            enabled: true
+      - devicePlugin:
+          enabled: false
+          # enabled: true
+          env:
+          - name: DP_DISABLE_HEALTHCHECKS
+            value: "x"
+          - name: DEVICE_LIST_STRATEGY
+            value: "cdi-cri,cdi-annotations"
+      - toolkit:
+          env:
+          - name: ACCEPT_NVIDIA_VISIBLE_DEVICES_ENVVAR_WHEN_UNPRIVILEGED
+            value: "false"
+          - name: ACCEPT_NVIDIA_VISIBLE_DEVICES_AS_VOLUME_MOUNTS
+            value: "false"
+          - name: RUNTIME_CONFIG_SOURCE
+            value: "file"
+  - name: hami-core
+    namespace: kube-system
+    chart: hami-charts/hami
+    version: "2.9.0"
+    needs:
+      - gpu-operator/nvidia-operator
+    values:
+      - scheduler:
+          kubeScheduler:
+            imageTag: "v1.35.3"
+    labels:
+      component: hami-core
+      tag: hami

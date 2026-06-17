@@ -1,0 +1,11 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: hami-demo
+nodes:
+  - role: control-plane
+    # Triggers nvidia-container-runtime to inject all GPUs (devices + driver
+    # libraries + binaries) into the node container via volume-mount mode.
+    # Requires: accept-nvidia-visible-devices-as-volume-mounts = true
+    extraMounts:
+      - hostPath: /dev/null
+        containerPath: /var/run/nvidia-container-devices/all
