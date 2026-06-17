@@ -27,8 +27,9 @@ It shows three things at once:
 7. [Build & deploy](#build--deploy)
 8. [Running the guided demo](#running-the-guided-demo)
 9. [Inference examples](#inference-examples)
-10. [File map](#file-map)
-11. [Troubleshooting](#troubleshooting)
+10. [Run with plain Docker (no Kubernetes)](#run-with-plain-docker-no-kubernetes)
+11. [File map](#file-map)
+12. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -309,6 +310,91 @@ kubectl port-forward svc/sglang-jozu 8001:8001 &
 curl -s localhost:8001/v1/chat/completions -H 'Content-Type: application/json' \
   -d '{"model":"qwen3-4b-instruct","messages":[{"role":"user","content":"hi"}]}'
 ```
+
+---
+
+## Run with plain Docker (no Kubernetes)
+
+You can serve the KitOps/Jozu model with **just Docker**, without kind/HAMi. The
+two images we built (`hami-kitunpacker`, `hami-sglang-jozu`, `hami-vllm-jozu`)
+work standalone — the init image unpacks the ModelKit into a shared **Docker
+volume**, and the engine image serves from it. (Requires the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/) for
+`--gpus`. On this host, prefix docker with `sg docker -c '…'`.)
+
+### SGLang via Docker
+
+```bash
+# 0) build the images once (or: cd kitops && ./build.sh)
+#    needs hami-kitunpacker:latest and hami-sglang-jozu:latest
+
+# 1) shared volume for the model
+docker volume create qwen3-model
+
+# 2) pull + unpack + flatten the ModelKit from Jozu Hub into the volume (/models/qwen3)
+docker run --rm \
+  -e MODELKIT_REF=jozu.ml/jonathangamer202002/qwen3-4b-instruct:latest \
+  -e UNPACK_PATH=/models -e MODEL_SUBDIR=qwen3 \
+  -v qwen3-model:/models \
+  hami-kitunpacker:latest
+
+# 3) serve it with SGLang (custom command baked into the image: model-path=/models/qwen3)
+docker run --rm --gpus all \
+  -v qwen3-model:/models \
+  --shm-size=4g \
+  -p 8001:30000 \
+  hami-sglang-jozu:latest
+# OpenAI server now on http://localhost:8001  (served model name: qwen3-4b-instruct)
+```
+
+Test it:
+
+```bash
+curl -s localhost:8001/v1/chat/completions -H 'Content-Type: application/json' \
+  -d '{"model":"qwen3-4b-instruct","messages":[{"role":"user","content":"hi"}],"max_tokens":50}'
+```
+
+> **Stock SGLang image (no custom build):** unpack as above, then point the
+> upstream image at the volume yourself:
+> ```bash
+> docker run --rm --gpus all -v qwen3-model:/models --shm-size=4g -p 8001:30000 \
+>   lmsysorg/sglang:latest \
+>   python3 -m sglang.launch_server --model-path /models/qwen3 \
+>     --host 0.0.0.0 --port 30000 --mem-fraction-static 0.8 --context-length 8192
+> ```
+
+### vLLM via Docker
+
+```bash
+# reuse the same unpacked volume from step 2 above
+docker run --rm --gpus all \
+  -v qwen3-model:/models \
+  --shm-size=4g \
+  -p 8000:8000 \
+  hami-vllm-jozu:latest
+# OpenAI server on http://localhost:8000  (served model name: qwen3-4b-instruct)
+```
+
+### RIC via Docker (turnkey — no unpack needed)
+
+The Jozu RIC already bundles the model, so it is the simplest `docker run`. This
+ModelKit's subdir layout means we set `MODEL_PATH` and flatten the shards first:
+
+```bash
+docker run --rm --gpus all -p 8000:8000 \
+  -e MODEL_PATH=/qwen3-4b-instruct \
+  --entrypoint /bin/bash \
+  jozu.ml/jonathangamer202002/qwen3-4b-instruct/vllm:latest \
+  -lc 'cd /qwen3-4b-instruct && for f in model/*.safetensors; do ln -sf "$f" .; done &&
+       exec /usr/local/bin/entrypoint.sh --gpu-memory-utilization=0.85 --max-model-len=8192'
+# served model name: "model"
+```
+
+> **Note on GPU limits:** plain `docker run --gpus all` uses the **whole** GPU —
+> there is no HAMi virtualization outside Kubernetes. The 60%-style memory/compute
+> caps (`gpumem`, `gpucores`) are a HAMi/Kubernetes feature; under Docker you can
+> only crudely bound memory with vLLM/SGLang flags
+> (`--gpu-memory-utilization` / `--mem-fraction-static`), not enforce an SM cap.
 
 ---
 
