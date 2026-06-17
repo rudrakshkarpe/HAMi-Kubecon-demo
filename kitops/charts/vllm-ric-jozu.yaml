@@ -1,0 +1,95 @@
+# Jozu Hub Runtime Inference Container (RIC) for Qwen3-4B-Instruct.
+#
+# Unlike vllm-jozu.yaml (ModelKit pulled + unpacked by an init container, then
+# served by our custom image/command), this uses Jozu's AUTO-GENERATED, turnkey
+# vLLM container: the model weights are BAKED INTO the image and its entrypoint
+# starts an OpenAI-compatible server on :8000. No init container, no unpack, no
+# custom command -- just pull the single signed OCI artifact from Jozu Hub.
+#
+#   image: jozu.ml/<org>/<repo>/vllm:<tag>   (publicly pullable, anonymous)
+#
+# HAMi still virtualizes the GPU: schedulerName + nvidia.com/gpumem|gpucores.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-ric-jozu
+  labels:
+    app: vllm-ric-jozu
+    pipeline: kitops-jozu
+    mode: ric
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-ric-jozu
+  template:
+    metadata:
+      labels:
+        app: vllm-ric-jozu
+        pipeline: kitops-jozu
+        mode: ric
+      annotations:
+        hami.io/node-scheduler-policy: binpack
+        hami.io/gpu-scheduler-policy: binpack
+    spec:
+      schedulerName: hami-scheduler
+      containers:
+        - name: vllm-ric
+          # Jozu RIC: vLLM + model in one image, served from jozu.ml directly.
+          image: jozu.ml/jonathangamer202002/qwen3-4b-instruct/vllm:latest
+          imagePullPolicy: IfNotPresent
+          # The RIC entrypoint runs:  vllm serve "${MODEL_PATH:-/}" ... "$@"
+          # This particular ModelKit stores the .safetensors shards in a model/
+          # subdir while config.json/index sit one level up, so we (1) point
+          # MODEL_PATH at the model dir and (2) symlink the shards up beside the
+          # index so vLLM/transformers can resolve them -- then hand off to the
+          # stock RIC entrypoint (which still serves on :8000).
+          env:
+            - name: MODEL_PATH
+              value: /qwen3-4b-instruct
+          command: ["/bin/bash", "-lc"]
+          args:
+            - >-
+              cd /qwen3-4b-instruct &&
+              for f in model/*.safetensors; do ln -sf "$f" .; done &&
+              exec /usr/local/bin/entrypoint.sh
+              --gpu-memory-utilization=0.85 --max-model-len=8192
+          ports:
+            - containerPort: 8000
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+              # HAMi caps the RIC to 60% of the H100: 60% of the SMs (compute)
+              # and 60% of the 80 GB VRAM (~48 GB visible inside the pod).
+              nvidia.com/gpucores: "60"
+              nvidia.com/gpumem-percentage: "60"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 40
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 90
+          volumeMounts:
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 4Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-ric-jozu
+spec:
+  selector:
+    app: vllm-ric-jozu
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+      name: vllm-svc
+  type: ClusterIP

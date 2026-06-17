@@ -1,0 +1,30 @@
+# Reference Kitfile for the Qwen3-4B-Instruct ModelKit used in this demo.
+#
+# The demo PULLS a pre-built public ModelKit from Jozu Hub:
+#     jozu.ml/jonathangamer202002/qwen3-4b-instruct:latest
+#
+# This Kitfile is provided so you can (re)pack and push your OWN ModelKit to a
+# registry (Jozu Hub, ACR, GHCR, ...) from a local HF-format model directory:
+#
+#     # 1) get a model directory (e.g. via `kit unpack` or `kit import`)
+#     # 2) place this Kitfile next to a ./qwen3 directory of safetensors + config
+#     kit pack . -t jozu.ml/<your-org>/qwen3-4b-instruct:latest
+#     kit login jozu.ml -u <user> --password-stdin   # needed only for push
+#     kit push jozu.ml/<your-org>/qwen3-4b-instruct:latest
+manifestVersion: "1.0"
+package:
+  name: qwen3-4b-instruct
+  version: "1.0"
+  authors:
+    - HAMi KubeCon Demo
+  description: >
+    Qwen3-4B-Instruct-2507 packaged as a KitOps ModelKit (HF safetensors layout),
+    served on HAMi-virtualized GPUs by vLLM and SGLang.
+model:
+  name: qwen3-4b-instruct
+  path: ./qwen3
+  license: Apache-2.0
+  description: Qwen3 4B instruct, safetensors (Qwen3ForCausalLM)
+docs:
+  - path: ./README.md
+    description: Pipeline documentation

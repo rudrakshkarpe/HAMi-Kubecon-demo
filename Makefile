@@ -1,4 +1,4 @@
-.PHONY: init test1 status help clean check-deps
+.PHONY: init test1 status help clean check-deps kitops-build kitops-deploy kitops-demo kitops-destroy
 
 deploy-workloads:
 	@echo "=== Deploying Basic Workloads ==="
@@ -37,6 +37,33 @@ test2: deploy-mig
 	@echo "=== Waiting for MIG Deployment ==="
 	@kubectl wait --for=condition=ready pod -l app=mig --timeout=300s || { echo "Warning: MIG pod not ready, continuing with test..."; }
 	@./scripts/control.sh --test-mig
+
+# ----- KitOps + Jozu Hub pipeline (vLLM + SGLang serving a ModelKit) -----
+kitops-build:
+	@echo "=== Building KitOps pipeline images + loading into kind ==="
+	@cd kitops && ./build.sh
+
+kitops-deploy:
+	@echo "=== Deploying KitOps/Jozu vLLM + SGLang (frees GPU from HF qwen/sglang) ==="
+	@kubectl scale deploy/qwen deploy/sglang --replicas=0 2>/dev/null || true
+	@kubectl apply -f kitops/charts/vllm-jozu.yaml
+	@kubectl apply -f kitops/charts/sglang-jozu.yaml
+	@echo "Watch the ModelKit pull:  kubectl logs -l app=vllm-jozu -c kitops-init -f"
+
+kitops-demo:
+	@AUTO=$${AUTO:-} DEPLOY=$${DEPLOY:-1} ./scripts/hami_kitops_demo.sh
+
+# Turnkey Jozu RIC (model + vLLM baked into one image, pulled straight from jozu.ml)
+kitops-ric:
+	@echo "=== Deploying Jozu RIC (vLLM, model baked in) on HAMi ==="
+	@kubectl scale deploy/vllm-jozu --replicas=0 2>/dev/null || true
+	@kubectl apply -f kitops/charts/vllm-ric-jozu.yaml
+	@echo "Watch:  kubectl get pods -l app=vllm-ric-jozu -w"
+
+kitops-destroy:
+	@kubectl delete -f kitops/charts/vllm-ric-jozu.yaml --ignore-not-found
+	@kubectl delete -f kitops/charts/sglang-jozu.yaml --ignore-not-found
+	@kubectl delete -f kitops/charts/vllm-jozu.yaml --ignore-not-found
 
 destroy-qwen:
 	@echo "helmfile -f helmfile.d/04-qwen.yaml destroy"

@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sglang-jozu
+  labels:
+    app: sglang-jozu
+    pipeline: kitops-jozu
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sglang-jozu
+  template:
+    metadata:
+      labels:
+        app: sglang-jozu
+        pipeline: kitops-jozu
+      annotations:
+        hami.io/node-scheduler-policy: binpack
+        hami.io/gpu-scheduler-policy: binpack
+    spec:
+      schedulerName: hami-scheduler
+      # --- KitOps initContainer: pull ModelKit from Jozu Hub + unpack to /models ---
+      initContainers:
+        - name: kitops-init
+          image: hami-kitunpacker:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MODELKIT_REF
+              value: "jozu.ml/jonathangamer202002/qwen3-4b-instruct:latest"
+            - name: UNPACK_PATH
+              value: "/models"
+            - name: MODEL_SUBDIR
+              value: "qwen3"
+          volumeMounts:
+            - name: modelkit
+              mountPath: /models
+      containers:
+        - name: sglang-jozu
+          image: hami-sglang-jozu:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MODEL_DIR
+              value: "/models/qwen3"
+            - name: SERVED_NAME
+              value: "qwen3-4b-instruct"
+            - name: CONTEXT_LEN
+              value: "8192"
+            - name: MEM_FRACTION
+              value: "0.8"
+          ports:
+            - containerPort: 30000
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+              nvidia.com/gpucores: "30"
+              nvidia.com/gpumem: "30000"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 30000
+            initialDelaySeconds: 40
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60
+          volumeMounts:
+            - name: modelkit
+              mountPath: /models
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: modelkit
+          hostPath:
+            path: /var/lib/hami-demo/modelkit
+            type: DirectoryOrCreate
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 4Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sglang-jozu
+spec:
+  selector:
+    app: sglang-jozu
+  ports:
+    - protocol: TCP
+      port: 8001
+      targetPort: 30000
+      name: sglang-svc
+  type: ClusterIP
